@@ -1,42 +1,31 @@
 import fs from 'fs';
 import path from 'path';
 
-const CHUNK_SIZE = 15 * 1024 * 1024; // 每块 15MB（低于 Cloudflare 25MB 限制）
+const CHUNK_SIZE = 15 * 1024 * 1024; // 15MB/块
 
 function splitFile(filePath) {
   if (!fs.existsSync(filePath)) return;
-
   const fileBuffer = fs.readFileSync(filePath);
+  if (fileBuffer.length <= CHUNK_SIZE) return;
+
   const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
   const dir = path.dirname(filePath);
   const baseName = path.basename(filePath);
 
-  console.log(`[Chunking] 切片 ${baseName} (${(fileBuffer.length / 1024 / 1024).toFixed(1)}MB) -> ${totalChunks} 个分块...`);
-
   for (let i = 0; i < totalChunks; i++) {
-    const start = i * CHUNK_SIZE;
-    const end = Math.min(start + CHUNK_SIZE, fileBuffer.length);
-    const chunkBuffer = fileBuffer.subarray(start, end);
-    const chunkPath = path.join(dir, `${baseName}.part${i + 1}`);
-    
-    fs.writeFileSync(chunkPath, chunkBuffer);
+    const chunk = fileBuffer.subarray(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    fs.writeFileSync(path.join(dir, `${baseName}.part${i + 1}`), chunk);
   }
 
-  // 生成配置清单，供前端获取分块总数
-  const manifestPath = path.join(dir, `${baseName}.manifest.json`);
-  fs.writeFileSync(manifestPath, JSON.stringify({
-    totalChunks,
-    originalSize: fileBuffer.length,
-    chunkSize: CHUNK_SIZE
-  }));
-
-  // 删除原超大文件，避免被 Cloudflare Pages 校验拦截
+  // 生成 manifest 并删除超大原文件
+  fs.writeFileSync(
+    path.join(dir, `${baseName}.manifest.json`),
+    JSON.stringify({ totalChunks, originalSize: fileBuffer.length })
+  );
   fs.unlinkSync(filePath);
-  console.log(`[Chunking] 完成并已删除原文件: ${baseName}`);
+  console.log(`[Chunking] 已切片并清除大文件: ${baseName}`);
 }
 
-const publicDir = process.argv[2] || 'public';
-const wasmDir = path.join(process.cwd(), publicDir, 'libreoffice-wasm');
-
-splitFile(path.join(wasmDir, 'soffice.data.bin'));
-splitFile(path.join(wasmDir, 'soffice.wasm.bin'));
+const targetDir = path.join(process.cwd(), process.argv[2] || 'public', 'libreoffice-wasm');
+splitFile(path.join(targetDir, 'soffice.data.bin'));
+splitFile(path.join(targetDir, 'soffice.wasm.bin'));
