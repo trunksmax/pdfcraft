@@ -34,7 +34,51 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
-    // Cache Pyodide assets (WASM, wheels) with cache-first strategy
+    // 1. 拦截 LibreOffice 超大 WASM .bin 文件，自动拉取 15MB 分块并在内存中拼合
+    if (url.pathname.endsWith('soffice.data.bin') || url.pathname.endsWith('soffice.wasm.bin')) {
+        event.respondWith(
+            (async () => {
+                try {
+                    const manifestRes = await fetch(`${url.href}.manifest.json`);
+                    if (!manifestRes.ok) return await fetch(event.request);
+
+                    const { totalChunks, originalSize } = await manifestRes.json();
+
+                    // 并行下载所有 15MB 分块
+                    const chunkPromises = Array.from({ length: totalChunks }, (_, i) =>
+                        fetch(`${url.href}.part${i + 1}`).then((r) => {
+                            if (!r.ok) throw new Error(`Chunk part ${i + 1} fetch failed`);
+                            return r.arrayBuffer();
+                        })
+                    );
+
+                    const chunks = await Promise.all(chunkPromises);
+
+                    // 快速拼接 Buffer
+                    const combined = new Uint8Array(originalSize);
+                    let offset = 0;
+                    for (const chunk of chunks) {
+                        combined.set(new Uint8Array(chunk), offset);
+                        offset += chunk.byteLength;
+                    }
+
+                    return new Response(combined, {
+                        status: 200,
+                        headers: {
+                            'Content-Type': 'application/octet-stream',
+                            'Content-Length': originalSize.toString(),
+                        },
+                    });
+                } catch (err) {
+                    console.warn('[SW Chunking] Failed to reassemble chunked file, falling back:', err);
+                    return await fetch(event.request);
+                }
+            })()
+        );
+        return;
+    }
+
+    // 2. 保持原有的 Cache Pyodide assets 逻辑 (WASM, wheels)
     const isPyodideAsset = url.pathname.startsWith('/pymupdf-wasm/') &&
         (url.pathname.endsWith('.wasm') ||
             url.pathname.endsWith('.whl') ||
