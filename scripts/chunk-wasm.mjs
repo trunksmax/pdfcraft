@@ -1,10 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 
-const CHUNK_SIZE = 15 * 1024 * 1024; // 15MB/块
+// 设定单文件分块大小为 15MB（低于 Cloudflare Pages 的 25MB 限制）
+const CHUNK_SIZE = 15 * 1024 * 1024;
 
 function splitFile(filePath) {
   if (!fs.existsSync(filePath)) return;
+
   const fileBuffer = fs.readFileSync(filePath);
   if (fileBuffer.length <= CHUNK_SIZE) return;
 
@@ -12,18 +14,24 @@ function splitFile(filePath) {
   const dir = path.dirname(filePath);
   const baseName = path.basename(filePath);
 
+  console.log(`[Chunking] 正在切片超大文件: ${baseName} (${(fileBuffer.length / 1024 / 1024).toFixed(1)}MB) -> ${totalChunks} 个分块`);
+
   for (let i = 0; i < totalChunks; i++) {
-    const chunk = fileBuffer.subarray(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-    fs.writeFileSync(path.join(dir, `${baseName}.part${i + 1}`), chunk);
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, fileBuffer.length);
+    const chunkBuffer = fileBuffer.subarray(start, end);
+    fs.writeFileSync(path.join(dir, `${baseName}.part${i + 1}`), chunkBuffer);
   }
 
-  // 生成 manifest 并删除超大原文件
+  // 保存清单文件供前端 Service Worker 获取配置
   fs.writeFileSync(
     path.join(dir, `${baseName}.manifest.json`),
-    JSON.stringify({ totalChunks, originalSize: fileBuffer.length })
+    JSON.stringify({ totalChunks, originalSize: fileBuffer.length, chunkSize: CHUNK_SIZE })
   );
+
+  // 删除超大原文件，防止 Cloudflare Pages 构建报错
   fs.unlinkSync(filePath);
-  console.log(`[Chunking] 已切片并清除大文件: ${baseName}`);
+  console.log(`[Chunking] 切片完成，已删除原文件: ${baseName}`);
 }
 
 const targetDir = path.join(process.cwd(), process.argv[2] || 'public', 'libreoffice-wasm');
