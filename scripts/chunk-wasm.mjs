@@ -35,5 +35,11 @@ function splitFile(filePath) {
 }
 
 const targetDir = path.join(process.cwd(), process.argv[2] || 'public', 'libreoffice-wasm');
+
+// 1. 同时对解压前的大型 .gz 压缩包进行切片
+splitFile(path.join(targetDir, 'soffice.data.bin.gz'));
+splitFile(path.join(targetDir, 'soffice.wasm.bin.gz'));
+
+// 2. 对解压后可能存在的大型 .bin 文件进行切片
 splitFile(path.join(targetDir, 'soffice.data.bin'));
 splitFile(path.join(targetDir, 'soffice.wasm.bin'));
